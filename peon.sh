@@ -3,6 +3,32 @@
 # Replaces notify.sh — handles sounds, tab titles, and notifications
 set -uo pipefail
 
+# Shared Python helper for safe config writing with Nix/Home Manager support
+# Usage: python3 -c "${_SAFE_WRITE_PY}" -- "<config_path>" '<json_cfg>' "<nix_hint>"
+# The nix_hint should be the full line like: programs.peon-ping.settings.volume = 0.7;
+_SAFE_WRITE_PY='
+import json, os, sys
+config_path = sys.argv[1]
+cfg = json.loads(sys.argv[2])
+nix_hint = sys.argv[3] if len(sys.argv) > 3 else "<option> = <value>"
+
+try:
+    with open(config_path, "w") as f:
+        json.dump(cfg, f, indent=2)
+except PermissionError:
+    if os.path.islink(config_path):
+        print(f"Error: Cannot write to {config_path} — it is managed by Nix/Home Manager.", file=sys.stderr)
+        print("To change this setting, update your Nix configuration:", file=sys.stderr)
+        print("", file=sys.stderr)
+        print(f"  programs.peon-ping.settings.{nix_hint}", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("Then rebuild your Nix configuration (e.g. darwin-rebuild switch --flake <path-to-your-flake>)", file=sys.stderr)
+        sys.exit(1)
+    else:
+        print(f"Error: Cannot write to {config_path} — permission denied.", file=sys.stderr)
+        sys.exit(1)
+'
+
 # --- Platform detection ---
 detect_platform() {
   case "$(uname -s)" in
@@ -30,7 +56,9 @@ detect_platform() {
 PLATFORM=${PLATFORM:-$(detect_platform)}
 
 PEON_DIR="${CLAUDE_PEON_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-# Homebrew/adapter installs: script lives in Cellar but packs/config are elsewhere
+# Save original install directory for finding bundled scripts (Nix, Homebrew)
+_INSTALL_DIR="$PEON_DIR"
+# Homebrew/Nix/adapter installs: script lives in read-only store but packs/config are elsewhere
 if [ ! -d "$PEON_DIR/packs" ]; then
   # Check CESP shared path (used by peon-ping-setup and standalone adapters)
   if [ -d "$HOME/.openpeon/packs" ]; then
@@ -38,7 +66,12 @@ if [ ! -d "$PEON_DIR/packs" ]; then
   else
     # Fall back to Claude Code hooks dir
     _hooks_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/peon-ping"
-    [ -d "$_hooks_dir/packs" ] && PEON_DIR="$_hooks_dir"
+    if [ -d "$_hooks_dir/packs" ]; then
+      PEON_DIR="$_hooks_dir"
+    else
+      # Neither exists — use ~/.openpeon as default user data dir (Nix, fresh install)
+      PEON_DIR="$HOME/.openpeon"
+    fi
     unset _hooks_dir
   fi
 fi
@@ -697,54 +730,99 @@ else:
   notifications)
     case "${2:-}" in
       on)
-        python3 -c "
-import json
-config_path = '$CONFIG'
-try:
-    cfg = json.load(open(config_path))
-except Exception:
-    cfg = {}
-cfg['desktop_notifications'] = True
-json.dump(cfg, open(config_path, 'w'), indent=2)
-print('peon-ping: desktop notifications on')
-"
-        sync_adapter_configs; exit 0 ;;
+        python3 -c "${_SAFE_WRITE_PY}" -- "$CONFIG" "$(python3 -c "import json,sys; cfg=json.load(open('$CONFIG')) if os.path.exists('$CONFIG') else {}; cfg['desktop_notifications']=True; print(json.dumps(cfg))" 2>/dev/null || echo '{}')" "desktop_notifications = true"
+        [ $? -eq 0 ] && echo 'peon-ping: desktop notifications on'
+        sync_adapter_configs; exit $? ;;
       off)
         python3 -c "
-import json
+import json, os, sys
 config_path = '$CONFIG'
+
+def safe_write_config(config_path, cfg):
+    try:
+        with open(config_path, 'w') as f:
+            json.dump(cfg, f, indent=2)
+    except PermissionError:
+        if os.path.islink(config_path):
+            print(f'Error: Cannot write to {config_path} — it is managed by Nix/Home Manager.', file=sys.stderr)
+            print('To change this setting, update your Nix configuration:', file=sys.stderr)
+            print('', file=sys.stderr)
+            print('  programs.peon-ping.settings.desktop_notifications = false;', file=sys.stderr)
+            print('', file=sys.stderr)
+            print('Then rebuild your Nix configuration (e.g. darwin-rebuild switch --flake <path-to-your-flake>)', file=sys.stderr)
+            sys.exit(1)
+        else:
+            print(f'Error: Cannot write to {config_path} — permission denied.', file=sys.stderr)
+            sys.exit(1)
+
 try:
     cfg = json.load(open(config_path))
 except Exception:
     cfg = {}
 cfg['desktop_notifications'] = False
-json.dump(cfg, open(config_path, 'w'), indent=2)
+safe_write_config(config_path, cfg)
 print('peon-ping: desktop notifications off')
 "
         sync_adapter_configs; exit 0 ;;
       overlay)
         python3 -c "
-import json
+import json, os, sys
 config_path = '$CONFIG'
+
+def safe_write_config(config_path, cfg):
+    try:
+        with open(config_path, 'w') as f:
+            json.dump(cfg, f, indent=2)
+    except PermissionError:
+        if os.path.islink(config_path):
+            print(f'Error: Cannot write to {config_path} — it is managed by Nix/Home Manager.', file=sys.stderr)
+            print('To change this setting, update your Nix configuration:', file=sys.stderr)
+            print('', file=sys.stderr)
+            print('  programs.peon-ping.settings.notification_style = \"overlay\";', file=sys.stderr)
+            print('', file=sys.stderr)
+            print('Then rebuild your Nix configuration (e.g. darwin-rebuild switch --flake <path-to-your-flake>)', file=sys.stderr)
+            sys.exit(1)
+        else:
+            print(f'Error: Cannot write to {config_path} — permission denied.', file=sys.stderr)
+            sys.exit(1)
+
 try:
     cfg = json.load(open(config_path))
 except Exception:
     cfg = {}
 cfg['notification_style'] = 'overlay'
-json.dump(cfg, open(config_path, 'w'), indent=2)
+safe_write_config(config_path, cfg)
 print('peon-ping: notification style set to overlay')
 "
         sync_adapter_configs; exit 0 ;;
       standard)
         python3 -c "
-import json
+import json, os, sys
 config_path = '$CONFIG'
+
+def safe_write_config(config_path, cfg):
+    try:
+        with open(config_path, 'w') as f:
+            json.dump(cfg, f, indent=2)
+    except PermissionError:
+        if os.path.islink(config_path):
+            print(f'Error: Cannot write to {config_path} — it is managed by Nix/Home Manager.', file=sys.stderr)
+            print('To change this setting, update your Nix configuration:', file=sys.stderr)
+            print('', file=sys.stderr)
+            print('  programs.peon-ping.settings.notification_style = \"standard\";', file=sys.stderr)
+            print('', file=sys.stderr)
+            print('Then rebuild your Nix configuration (e.g. darwin-rebuild switch --flake <path-to-your-flake>)', file=sys.stderr)
+            sys.exit(1)
+        else:
+            print(f'Error: Cannot write to {config_path} — permission denied.', file=sys.stderr)
+            sys.exit(1)
+
 try:
     cfg = json.load(open(config_path))
 except Exception:
     cfg = {}
 cfg['notification_style'] = 'standard'
-json.dump(cfg, open(config_path, 'w'), indent=2)
+safe_write_config(config_path, cfg)
 print('peon-ping: notification style set to standard')
 "
         sync_adapter_configs; exit 0 ;;
@@ -787,8 +865,26 @@ except Exception:
       exit 0
     fi
     python3 -c "
-import json, sys
+import json, sys, os
 config_path = '$CONFIG'
+
+def safe_write_config(config_path, cfg):
+    try:
+        with open(config_path, 'w') as f:
+            json.dump(cfg, f, indent=2)
+    except PermissionError:
+        if os.path.islink(config_path):
+            print(f'Error: Cannot write to {config_path} — it is managed by Nix/Home Manager.', file=sys.stderr)
+            print('To change this setting, update your Nix configuration:', file=sys.stderr)
+            print('', file=sys.stderr)
+            print('  programs.peon-ping.settings.volume = ' + str(round(vol, 2)) + ';', file=sys.stderr)
+            print('', file=sys.stderr)
+            print('Then rebuild your Nix configuration (e.g. darwin-rebuild switch --flake <path-to-your-flake>)', file=sys.stderr)
+            sys.exit(1)
+        else:
+            print(f'Error: Cannot write to {config_path} — permission denied.', file=sys.stderr)
+            sys.exit(1)
+
 try:
     vol = float('$VOL_ARG')
 except ValueError:
@@ -802,7 +898,7 @@ try:
 except Exception:
     cfg = {}
 cfg['volume'] = round(vol, 2)
-json.dump(cfg, open(config_path, 'w'), indent=2)
+safe_write_config(config_path, cfg)
 print(f'peon-ping: volume set to {vol}')
 "
     _rc=$?; [ $_rc -eq 0 ] && sync_adapter_configs; exit $_rc ;;
@@ -931,7 +1027,21 @@ except Exception:
     cfg = {}
 cfg['default_pack'] = pack_arg
 cfg.pop('active_pack', None)
-json.dump(cfg, open(config_path, 'w'), indent=2)
+try:
+    json.dump(cfg, open(config_path, 'w'), indent=2)
+except PermissionError:
+    # Config is likely managed by Nix (symlink to store)
+    if os.path.islink(config_path):
+        print(f'Error: Cannot write to {config_path} — it is managed by Nix/Home Manager.', file=sys.stderr)
+        print('To switch packs, update your Nix configuration:', file=sys.stderr)
+        print('', file=sys.stderr)
+        print('  programs.peon-ping.settings.default_pack = "' + pack_arg + '";', file=sys.stderr)
+        print('', file=sys.stderr)
+        print('Then rebuild your Nix configuration (e.g. darwin-rebuild switch --flake <path-to-your-flake>)', file=sys.stderr)
+        sys.exit(1)
+    else:
+        print(f'Error: Cannot write to {config_path} — permission denied.', file=sys.stderr)
+        sys.exit(1)
 display = pack_arg
 for mname in ('openpeon.json', 'manifest.json'):
     mpath = os.path.join(packs_dir, pack_arg, mname)
@@ -1477,9 +1587,14 @@ print('service=' + mn.get('service', ''))
         exit 1 ;;
     esac ;;
   relay)
-    RELAY_SCRIPT="$PEON_DIR/relay.sh"
-    if [ ! -f "$RELAY_SCRIPT" ]; then
-      echo "Error: relay.sh not found at $PEON_DIR" >&2
+    # Find relay.sh - use original install dir (Nix, Homebrew), then PEON_DIR (legacy)
+    RELAY_SCRIPT=""
+    # _INSTALL_DIR is set at startup and preserved even when PEON_DIR changes to ~/.openpeon
+    [ -f "${_INSTALL_DIR}/relay.sh" ] && RELAY_SCRIPT="${_INSTALL_DIR}/relay.sh"
+    # Fallback: PEON_DIR (legacy install where relay.sh is in user dir)
+    [ -z "$RELAY_SCRIPT" ] && [ -f "$PEON_DIR/relay.sh" ] && RELAY_SCRIPT="$PEON_DIR/relay.sh"
+    if [ -z "$RELAY_SCRIPT" ]; then
+      echo "Error: relay.sh not found" >&2
       echo "Re-run the installer to get the relay script." >&2
       exit 1
     fi
@@ -1541,6 +1656,7 @@ try:
 except Exception:
     cfg = {}
 volume = cfg.get('volume', 0.5)
+use_sound_effects_device = cfg.get('use_sound_effects_device', True)
 active_pack = cfg.get('default_pack', cfg.get('active_pack', 'peon'))
 
 # Load manifest
@@ -1570,6 +1686,7 @@ if not cat_data or not cat_data.get('sounds'):
 display_name = manifest.get('display_name', active_pack)
 print('PACK_DISPLAY=' + repr(display_name))
 print('VOLUME=' + str(volume))
+print('USE_SOUND_EFFECTS_DEVICE=' + str(use_sound_effects_device).lower())
 
 sounds = cat_data['sounds']
 for i, s in enumerate(sounds):
@@ -1595,6 +1712,8 @@ for i, s in enumerate(sounds):
     # Parse output
     PREVIEW_VOL=$(echo "$PREVIEW_OUTPUT" | grep '^VOLUME=' | head -1 | cut -d= -f2)
     PREVIEW_VOL="${PREVIEW_VOL:-0.5}"
+    USE_SOUND_EFFECTS_DEVICE=$(echo "$PREVIEW_OUTPUT" | grep '^USE_SOUND_EFFECTS_DEVICE=' | head -1 | cut -d= -f2)
+    USE_SOUND_EFFECTS_DEVICE="${USE_SOUND_EFFECTS_DEVICE:-true}"
     PACK_DISPLAY=$(echo "$PREVIEW_OUTPUT" | grep '^PACK_DISPLAY=' | head -1 | sed "s/^PACK_DISPLAY=//;s/^'//;s/'$//")
 
     echo "peon-ping: previewing [$PREVIEW_CAT] from $PACK_DISPLAY"

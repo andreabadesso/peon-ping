@@ -89,6 +89,63 @@ cd peon-ping
 ./install.sh
 ```
 
+### Option 5: Nix (macOS, Linux)
+
+Run directly from source without installing:
+
+```bash
+nix run github:PeonPing/peon-ping -- status
+nix run github:PeonPing/peon-ping -- packs install peon
+```
+
+Or install to your profile:
+
+```bash
+nix profile install github:PeonPing/peon-ping
+```
+
+Development shell (bats, shellcheck, nodejs):
+
+```bash
+nix develop  # or use direnv
+```
+
+#### Home Manager module (declarative configuration)
+
+For reproducible setups, use the Home Manager module:
+
+```nix
+# In your flake.nix or home.nix (ensure 'inputs' is available via specialArgs or extraSpecialArgs)
+{ inputs, pkgs, ... }: {
+  imports = [ inputs.peon-ping.homeManagerModules.default ];
+
+  programs.peon-ping = {
+    enable = true;
+    package = inputs.peon-ping.packages.${pkgs.system}.default;
+    
+    settings = {
+      default_pack = "glados";
+      volume = 0.7;
+      enabled = true;
+      desktop_notifications = true;
+      categories = {
+        "session.start" = true;
+        "task.complete" = true;
+        "task.error" = true;
+        "input.required" = true;
+        "resource.limit" = true;
+        "user.spam" = true;
+      };
+    };
+    
+    installPacks = [ "peon" "glados" "sc_kerrigan" ];
+    enableZshIntegration = true;
+  };
+}
+```
+
+This creates `~/.openpeon/config.json` and installs specified packs automatically.
+
 ## What you'll hear
 
 | Event | CESP Category | Examples |
@@ -667,7 +724,7 @@ Mobile notifications fire on every event regardless of window focus — they're 
 
 ## Sound packs
 
-75+ packs across Warcraft, StarCraft, Red Alert, Portal, Zelda, Dota 2, Helldivers 2, Elder Scrolls, and more. The default install includes 5 curated packs:
+99 packs across Warcraft, StarCraft, Red Alert, Portal, Zelda, Dota 2, Helldivers 2, Elder Scrolls, and more. The default install includes 5 curated packs:
 
 | Pack | Character | Sounds |
 |---|---|---|
@@ -737,7 +794,7 @@ Sound packs are downloaded from the [OpenPeon registry](https://github.com/PeonP
 
 - [@peonping on X](https://x.com/peonping) — updates and announcements
 - [peonping.com](https://peonping.com/) — landing page
-- [openpeon.com](https://openpeon.com/) — CESP spec, pack browser, creation guide
+- [openpeon.com](https://openpeon.com/) — CESP spec, pack browser, [integration guide](https://openpeon.com/integrate), creation guide
 - [OpenPeon registry](https://github.com/PeonPing/registry) — pack registry (GitHub Pages)
 - [og-packs](https://github.com/PeonPing/og-packs) — official sound packs
 - [peon-pet](https://github.com/PeonPing/peon-pet) — macOS desktop pet (orc sprite, reacts to hook events)
