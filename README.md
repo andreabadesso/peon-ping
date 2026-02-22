@@ -115,8 +115,8 @@ nix develop  # or use direnv
 For reproducible setups, use the Home Manager module:
 
 ```nix
-# In your home.nix or flake.nix
-{ inputs, ... }: {
+# In your flake.nix or home.nix (ensure 'inputs' is available via specialArgs or extraSpecialArgs)
+{ inputs, pkgs, ... }: {
   imports = [ inputs.peon-ping.homeManagerModules.default ];
 
   programs.peon-ping = {
@@ -724,7 +724,7 @@ Mobile notifications fire on every event regardless of window focus — they're 
 
 ## Sound packs
 
-75+ packs across Warcraft, StarCraft, Red Alert, Portal, Zelda, Dota 2, Helldivers 2, Elder Scrolls, and more. The default install includes 5 curated packs:
+99 packs across Warcraft, StarCraft, Red Alert, Portal, Zelda, Dota 2, Helldivers 2, Elder Scrolls, and more. The default install includes 5 curated packs:
 
 | Pack | Character | Sounds |
 |---|---|---|
